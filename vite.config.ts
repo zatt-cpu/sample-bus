@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig, Plugin } from 'vite';
 import busArrivalHandler from './api/bus-arrival';
+import healthHandler from './api/health.js';
 
 function apiDevMiddleware(): Plugin {
   return {
@@ -28,6 +29,10 @@ function apiDevMiddleware(): Plugin {
               res.end(JSON.stringify(data));
               return res;
             };
+
+            if (url.pathname.startsWith('/api/health')) {
+              return await healthHandler(req, res);
+            }
 
             return await busArrivalHandler(req, res);
           } catch (err) {
