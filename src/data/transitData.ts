@@ -9,10 +9,22 @@ export const CURRENT_STOP: BusStopDetail = {
   road: 'along Orchard Road',
   distanceMeters: 120,
   walkMinutes: 2,
-  services: ['65', '14', '106', '175', '123', '7', '147', '166', '174', '190', '857'],
+  services: ['65', '15', '14', '106', '175', '123', '7', '147', '166', '174', '190', '857'],
   isStarred: true,
   lat: 1.3013,
   lng: 103.8406,
+};
+
+export const STOP_83139: BusStopDetail = {
+  id: '83139',
+  name: "Opp Parkway Builder's Ctr",
+  road: 'along Still Road',
+  distanceMeters: 450,
+  walkMinutes: 6,
+  services: ['15', '55', '150', '966'],
+  isStarred: false,
+  lat: 1.3128,
+  lng: 103.9056,
 };
 
 export const NEARBY_STOPS: BusStopDetail[] = [
@@ -79,6 +91,22 @@ export const BUS_SERVICES_AT_STOP: Record<string, BusServiceSummary> = {
     ],
     isStarred: true,
     hasAlarm: false,
+  },
+  '15': {
+    serviceNo: '15',
+    operator: 'GAS',
+    destination: 'Pasir Ris Int',
+    via: 'Marine Parade, Tampines',
+    origin: 'Marine Parade (Loop)',
+    operatingHours: '05:45 - 23:45 daily',
+    frequencyPeak: '6-10 min peak',
+    type: 'WAB Trunk',
+    arrivals: [
+      { time: 'Arr', isArr: true, deck: 'DD', crowd: 'seats', wab: true, plate: 'SG5420M' },
+      { time: '8', isArr: false, deck: 'SD', crowd: 'standing', wab: true, plate: 'SG1080P' },
+      { time: '17', isArr: false, deck: 'DD', crowd: 'limited', wab: true, plate: 'SG5511A' },
+    ],
+    isStarred: false,
   },
   '14': {
     serviceNo: '14',

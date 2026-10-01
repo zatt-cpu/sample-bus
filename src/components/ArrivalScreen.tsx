@@ -48,7 +48,7 @@ export const ArrivalScreen: React.FC<ArrivalScreenProps> = ({
     (b) => b !== queriedBus
   );
 
-  const quickPills = ['65', '147', '14', '7', '106'];
+  const quickPills = ['65', '15', '147', '14', '7', '106'];
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
