@@ -42,6 +42,93 @@ export interface LTABusArrivalResponse {
 }
 
 /**
+ * Helper to extract tag value from XML string (handles namespaced tags like d:ServiceNo)
+ */
+function getTagValue(xmlChunk: string, tagName: string): string {
+  const regex = new RegExp(`<(?:[a-zA-Z0-9_-]+:)?${tagName}[^>]*>(.*?)</(?:[a-zA-Z0-9_-]+:)?${tagName}>`, 's');
+  const match = xmlChunk.match(regex);
+  return match ? match[1].trim() : '';
+}
+
+/**
+ * Parses individual NextBus / NextBus2 / NextBus3 block from LTA OData XML
+ */
+function parseArrivalInfoXml(xmlChunk: string, busTagName: string): LTANextBus | undefined {
+  const regex = new RegExp(`<(?:[a-zA-Z0-9_-]+:)?${busTagName}[^>]*>(.*?)</(?:[a-zA-Z0-9_-]+:)?${busTagName}>`, 's');
+  const match = xmlChunk.match(regex);
+  if (!match) return undefined;
+
+  const inner = match[1];
+
+  // Check if null or empty
+  if (inner.includes('m:null="true"') || inner.includes('EstimatedArrival m:null="true"')) {
+    return undefined;
+  }
+
+  const estimatedArrival = getTagValue(inner, 'EstimatedArrival');
+  if (!estimatedArrival) {
+    return undefined;
+  }
+
+  return {
+    OriginCode: getTagValue(inner, 'OriginCode'),
+    DestinationCode: getTagValue(inner, 'DestinationCode'),
+    EstimatedArrival: estimatedArrival,
+    Latitude: getTagValue(inner, 'Latitude'),
+    Longitude: getTagValue(inner, 'Longitude'),
+    VisitNumber: getTagValue(inner, 'VisitNumber') || '1',
+    Load: (getTagValue(inner, 'Load') as any) || 'SEA',
+    Feature: (getTagValue(inner, 'Feature') as any) || 'WAB',
+    Type: (getTagValue(inner, 'Type') as any) || 'SD',
+  };
+}
+
+/**
+ * Parses LTA DataMall v3 Atom / OData XML feed into LTABusArrivalResponse
+ */
+export function parseLtaODataXml(xml: string, fallbackStopCode: string): LTABusArrivalResponse {
+  const busStopId =
+    getTagValue(xml, 'BusStopID') ||
+    getTagValue(xml, 'BusStopCode') ||
+    fallbackStopCode;
+
+  // Extract <d:Services> section
+  const servicesMatch = xml.match(/<(?:[a-zA-Z0-9_-]+:)?Services[^>]*>(.*?)<\/(?:[a-zA-Z0-9_-]+:)?Services>/s);
+  const servicesBlock = servicesMatch ? servicesMatch[1] : xml;
+
+  // Match all <d:element> items
+  const elementRegex = /<(?:[a-zA-Z0-9_-]+:)?element[^>]*>(.*?)<\/(?:[a-zA-Z0-9_-]+:)?element>/gs;
+  const services: LTABusService[] = [];
+  let elMatch: RegExpExecArray | null;
+
+  while ((elMatch = elementRegex.exec(servicesBlock)) !== null) {
+    const el = elMatch[1];
+    const serviceNo = getTagValue(el, 'ServiceNo');
+    const operator = getTagValue(el, 'Operator');
+
+    const nextBus = parseArrivalInfoXml(el, 'NextBus');
+    const nextBus2 = parseArrivalInfoXml(el, 'NextBus2');
+    const nextBus3 = parseArrivalInfoXml(el, 'NextBus3');
+
+    if (serviceNo && nextBus) {
+      services.push({
+        ServiceNo: serviceNo,
+        Operator: operator || 'SBST',
+        NextBus: nextBus,
+        NextBus2: nextBus2,
+        NextBus3: nextBus3,
+      });
+    }
+  }
+
+  return {
+    'odata.metadata': 'https://datamall2.mytransport.sg/ltaodataservice/v3/$metadata#BusArrival',
+    BusStopCode: busStopId,
+    Services: services,
+  };
+}
+
+/**
  * Calculates minutes remaining from current time to EstimatedArrival ISO string
  */
 function calculateMinutesToArrival(estimatedArrivalIso?: string): number | 'Arr' {
@@ -82,7 +169,10 @@ function enrichBus(bus?: LTANextBus): LTANextBus | undefined {
  */
 function generateFallbackData(busStopCode: string, serviceNo?: string): LTABusArrivalResponse {
   const now = Date.now();
-  const sampleServices = serviceNo ? [serviceNo] : ['15', '65', '14', '106'];
+  let sampleServices = serviceNo ? [serviceNo] : ['15', '65', '14', '106'];
+  if (!serviceNo && busStopCode === '20251') {
+    sampleServices = ['176', '30', '78'];
+  }
 
   return {
     'odata.metadata': 'https://datamall2.mytransport.sg/ltaodataservice/v3/$metadata#BusArrival',
@@ -90,52 +180,57 @@ function generateFallbackData(busStopCode: string, serviceNo?: string): LTABusAr
     isMock: true,
     warning:
       'LTA_API_KEY is not set in environment variables. Showing simulated transit arrival data. Add LTA_API_KEY in Vercel Environment Variables to get live LTA telemetry.',
-    Services: sampleServices.map((svc) => ({
-      ServiceNo: svc,
-      Operator: svc === '15' ? 'GAS' : svc === '106' ? 'TTS' : 'SBST',
-      NextBus: {
-        OriginCode: '77009',
-        DestinationCode: '77009',
-        EstimatedArrival: new Date(now + 90 * 1000).toISOString(),
-        Latitude: '1.3050',
-        Longitude: '103.8500',
-        VisitNumber: '1',
-        Load: 'SEA',
-        Feature: 'WAB',
-        Type: 'DD',
-        minutesToArrival: 'Arr',
-        isArr: true,
-        loadDescription: 'Seats Available',
-      },
-      NextBus2: {
-        OriginCode: '77009',
-        DestinationCode: '77009',
-        EstimatedArrival: new Date(now + 7 * 60 * 1000).toISOString(),
-        Latitude: '1.3120',
-        Longitude: '103.8620',
-        VisitNumber: '1',
-        Load: 'SDA',
-        Feature: 'WAB',
-        Type: 'SD',
-        minutesToArrival: 7,
-        isArr: false,
-        loadDescription: 'Standing Available',
-      },
-      NextBus3: {
-        OriginCode: '77009',
-        DestinationCode: '77009',
-        EstimatedArrival: new Date(now + 18 * 60 * 1000).toISOString(),
-        Latitude: '1.3280',
-        Longitude: '103.8800',
-        VisitNumber: '1',
-        Load: 'LSD',
-        Feature: 'WAB',
-        Type: 'DD',
-        minutesToArrival: 18,
-        isArr: false,
-        loadDescription: 'Limited Standing',
-      },
-    })),
+    Services: sampleServices.map((svc) => {
+      const op =
+        svc === '176' ? 'SMRT' : svc === '78' || svc === '106' ? 'TTS' : svc === '15' ? 'GAS' : 'SBST';
+
+      return {
+        ServiceNo: svc,
+        Operator: op,
+        NextBus: {
+          OriginCode: '10009',
+          DestinationCode: '45009',
+          EstimatedArrival: new Date(now + 90 * 1000).toISOString(),
+          Latitude: '1.310178',
+          Longitude: '103.756378',
+          VisitNumber: '1',
+          Load: 'SEA',
+          Feature: 'WAB',
+          Type: 'DD',
+          minutesToArrival: 'Arr',
+          isArr: true,
+          loadDescription: 'Seats Available',
+        },
+        NextBus2: {
+          OriginCode: '10009',
+          DestinationCode: '45009',
+          EstimatedArrival: new Date(now + 7 * 60 * 1000).toISOString(),
+          Latitude: '1.276848',
+          Longitude: '103.789578',
+          VisitNumber: '1',
+          Load: 'SEA',
+          Feature: 'WAB',
+          Type: 'DD',
+          minutesToArrival: 7,
+          isArr: false,
+          loadDescription: 'Seats Available',
+        },
+        NextBus3: {
+          OriginCode: '10009',
+          DestinationCode: '45009',
+          EstimatedArrival: new Date(now + 18 * 60 * 1000).toISOString(),
+          Latitude: '1.275151',
+          Longitude: '103.814938',
+          VisitNumber: '1',
+          Load: 'SEA',
+          Feature: 'WAB',
+          Type: 'SD',
+          minutesToArrival: 18,
+          isArr: false,
+          loadDescription: 'Seats Available',
+        },
+      };
+    }),
   };
 }
 
@@ -164,7 +259,9 @@ export default async function handler(req: any, res: any) {
     const url = new URL(req.url || '/', 'http://localhost');
     const busStopCode =
       (query.BusStopCode as string) ||
+      (query.BusStopID as string) ||
       url.searchParams.get('BusStopCode') ||
+      url.searchParams.get('BusStopID') ||
       '83139';
     const serviceNo =
       (query.ServiceNo as string) ||
@@ -198,7 +295,7 @@ export default async function handler(req: any, res: any) {
       method: 'GET',
       headers: {
         AccountKey: apiKey,
-        accept: 'application/json',
+        Accept: 'application/json, application/xml, text/xml, */*',
       },
     });
 
@@ -212,7 +309,16 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json(fallback);
     }
 
-    const data = (await ltaResponse.json()) as LTABusArrivalResponse;
+    const rawResponseText = await ltaResponse.text();
+    let data: LTABusArrivalResponse;
+
+    // Detect if LTA returned XML or JSON
+    const trimmed = rawResponseText.trim();
+    if (trimmed.startsWith('<') || trimmed.includes('<entry') || trimmed.includes('<d:Services')) {
+      data = parseLtaODataXml(rawResponseText, busStopCode);
+    } else {
+      data = JSON.parse(rawResponseText) as LTABusArrivalResponse;
+    }
 
     // Enrich the services with calculated minutes and human-readable load descriptions
     if (data && Array.isArray(data.Services)) {
